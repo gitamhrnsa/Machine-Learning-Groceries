@@ -1,0 +1,203 @@
+---
+title: "Groceries Machine Learning"
+author: "Gita Maharani"
+date: "`r format(Sys.Date(), '%B %e, %Y')`"
+output: 
+  html_document:
+    df_print: paged
+    highlight: tango
+    theme: cosmo
+    toc: yes
+    toc_float:
+      collapsed: no
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, fig.align = "center", out.width = "80%")
+options(scipen = 99)
+```
+
+
+<style>
+body {
+text-align: justify}
+</style>
+
+# 1. Introduction
+
+Pada kali ini akan menganalisis korelasi antara variabel target "channel" dengan variabel prediktor , dan mengembangkan model yang cocok untuk memprediksi hasil saluran berdasarkan data lain yang diketahui dalam hal binary categorical answer, "ya" atau "tidak ", berdasarkan probabilitas yang dihasilkan.
+
+## 1.1 Import Library and Setup
+
+Import library yang diperlukan dalam pemrosesan dataframe
+
+```{r cars}
+library(rlang)
+library(caret)
+library(dplyr)
+library(gmodels)
+library(ggplot2)
+library(class)
+library(tidyr)
+library(GGally)
+theme_set(theme_minimal() +
+            theme(legend.position = "top"))
+options(scipen = 999)
+```
+
+
+## 1.2 Data Import
+Impor data yang akan dianalisis dan pastikan sudah satu folder dengan Rproj. Dalam hal ini data yang digunakan adalah data grosir yang diperoleh dari website kaggle. Selain itu, kami juga menganalisis jenis data di setiap variabel dari kerangka data yang kami simpan di dalam variabel grosir.
+
+```{r pressure, echo=FALSE}
+wholesale <- read.csv("wholesale.csv")
+```
+Berikut merupakan penjelasan dari masing-masing variabel:
+
+Channel -> Hotel/Restaurant/Cafe
+Region -> Lisnon, Oporto or others (nominal)
+Fresh -> pengeluaran tahunan untuk produk segar
+Milk -> pengeluaran tahunan untuk produk susu
+Grocery -> pengeluaran tahunan untuk produk grocery 
+Frozen -> pengeluaran tahunan untuk produk beku 
+Detergent_Papers -> pengeluaran tahunan untuk produk detergent and kertas
+Delicassen -> pengeluaran tahunan untuk delicatessen products 
+
+## 1.3 Check Data Type
+Melakukan pengecekan pada tipe data setiap variabel
+```{r}
+str(wholesale)
+```
+
+
+# 2. Exploratory Data Analysis
+Sebelum membuat model apa pun untuk prediksi data, kita perlu mengeksplorasi lebih jauh jenis data yang kita miliki di setiap variabel dan menentukan apakah jenisnya benar, dan memeriksa apakah ada nilai nol..
+
+```{r}
+colSums(is.na(wholesale))
+```
+Setelah memanggil fungsi di atas, kami yakin bahwa datanya lengkap. Oleh karena itu, tidak ada missing value.
+```{r}
+ggcorr(wholesale)
+```
+Dari chart di atas saat memanggil fungsi ggcorr, kita dapat mengetahui variabel mana yang sangat saling berkorelasi dan tidak. 
+
+Selain itu, kita juga perlu membuang variabel Region karena tipe data faktor akan membuat analisis kita lebih bias karena nilainya yang diskrit (lebih cocok untuk model klasifikasi seperti naiveBayes dan randomForest).
+```{r}
+wholesale <- wholesale %>% 
+    select(-c("Region"))
+```
+
+
+## 2.1 Sampling
+
+```{r}
+#Set a random number as the seed
+set.seed(123)
+index <- sample(nrow(wholesale), nrow(wholesale)*0.8)
+data_train <- wholesale[index, ]
+data_test <-wholesale[-index,]
+data_train_glm <- data_train  %>% 
+  mutate_at("Channel", as.factor)
+data_test_glm <- data_test  %>% 
+  mutate_at("Channel", as.factor)
+```
+
+Periksa proporsi channel target variable di data_train, dan tentukan apakah ada ketidakseimbangan data atau tidak.
+```{r}
+table(as.factor(data_train$Channel))
+```
+
+Seperti yang dapat dilihat bahwa ada ketidakseimbangan yang signifikan antara satu nilai dengan nilai lainnya, kita dapat melakukan metode up-sampling untuk menyeimbangkan proporsi karena jumlah total data lebih besar dari 1000.
+
+```{r}
+data_train <- data_train %>% mutate_at("Channel", as.factor)
+data_train <- upSample(x= data_train %>% select(-c("Channel")), 
+                         y= data_train$Channel, list = F,
+                         yname = "Channel")
+table(data_train$Channel)
+```
+
+
+
+```{r}
+summary(data_train)
+```
+
+```{r}
+plot(as.factor(data_train$Channel), data_train$Fresh)
+```
+Setelah memeriksa hasil summary function di atas, dapat disimpulkan bahwa distribusi masing-masing variabel bisa sangat ekstrim, dan karenanya, penskalaan terhadap dataframe mungkin diperlukan untuk membuat prediction model less bias.
+
+#3. Data Preprocessing
+Selama proses ini, kami akan memisahkan data train dan data test ke dalam komponen x dan y masing-masing untuk train dan test model.
+```{r}
+train_x <- data_train %>% 
+  select(-Channel) %>% 
+  scale()
+train_y <- as.factor(data_train$Channel)
+```
+
+```{r}
+test_x <- data_test %>% 
+  select(-Channel) %>% 
+  scale(center = attr(train_x,"scaled:center"), 
+  scale = attr(train_x, "scaled:scale") 
+  )
+test_y <- as.factor(data_test$Channel)
+```
+
+#4. Model Fitting
+
+## 4.1 Using generalized linear model
+Pada bagian ini, kami menggunakan generalized linear model untuk memahami bagaimana model akan seperti ketika diinterpretasikan sebagai regresi linier dari variabel prediktornya.
+```{r}
+model_wholesale <- glm(Channel ~ ., data_train_glm, family = "binomial")
+model_step <- step(model_wholesale, direction="both", trace=0)
+summary(model_step)
+```
+
+
+Dari ringkasan di atas, kita dapat menyimpulkan intercept of Channel ketika semuanya 0 adalah -3.65194182. Selain itu, juga dapat dilihat bahwa Grocery, Detergent_Paper, dan Delicassen merupakan variabel yang signifikan.
+```{r}
+pred_train <- predict(model_step, data_train_glm, type="response")
+pred_train <- ifelse(pred_train > 0.5, 2, 1) %>% as.factor
+confusionMatrix(pred_train, data_train_glm$Channel)
+```
+Hasil di atas menunjukkan hasil performa dari model data train
+
+```{r}
+predict_glm <- predict(model_step, data_test_glm, type="response")
+predict_glm <- ifelse(predict_glm > 0.5, 2, 1) %>% as.factor
+predict_glm
+confusionMatrix(predict_glm, data_test_glm$Channel)
+```
+Keakuratan yang ditunjukkan pada matriks konfusi di atas menunjukkan bahwa model tersebut optimal. Namun, model ini mungkin tidak cocok untuk dataframe ini, karena terdapat peringatan probabilitas yang dipasang secara numerik sebagai 0 atau 1 yang mungkin disebabkan oleh outlier yang ekstrim.
+
+
+## 4.2 Using K-nearest neighbor
+
+```{r}
+modelknn <- knn3(train_x, 
+                 train_y,
+                 k = sqrt(nrow(train_x)))
+predknn <- predict(modelknn, test_x, type="class")
+```
+
+```{r}
+predknn <- knn3Train(train_x,
+                     test_x,
+                     train_y,
+                     k = sqrt(nrow(train_x)) %>% round()) %>% 
+  as.factor()
+head(predknn)
+```
+
+```{r}
+confusionMatrix(predknn, test_y)
+```
+
+Dengan menggunakan algoritma K-nearest neighbor, kami dapat memperoleh model dengan recall yang lebih rendah dibandingkan dengan model GLM, tetapi spesifisitasnya lebih tinggi.
+
+# 5.Conclusion
+Tujuan interpretasi laporan ini sangat tergantung pada tujuan pembaca. Disarankan untuk menggunakan model regresi glm, step-wise untuk mendapatkan recall yang lebih tinggi, meskipun tidak ada perbedaan besar antara kedua model. Di sisi lain, model K-nearest neighbor berhasil mendapatkan metrik yang lebih akurat secara keseluruhan yang tercermin dalam spesifisitas dan akurasi keseluruhan dari hasil matriks konfusi.
